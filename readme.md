@@ -18,13 +18,13 @@ channelsRepo.create(Channel(id = "hello"))
 ## Get messages
 ```kotlin
 val messagesRepo:MessagesRepo = chatRepo.messages
-val messages:LiveData<List<Message>> = messagesRepo.get("messages:hello")
+val messages:LiveData<List<Message>> = messagesRepo.get(cid = "messages:hello")
 //or short
-val messages = chatRepo.messages.get("messages:hello")
+val messages = chatRepo.messages.get(cid = "messages:hello")
 ```
 ## Create message
 ```kotlin
-messagesRepo.create("messages:hello", Message(test = "hello"))
+messagesRepo.create("messages:hello", Message(text = "hello"))
 ```
 ## Get users
 ```kotlin
