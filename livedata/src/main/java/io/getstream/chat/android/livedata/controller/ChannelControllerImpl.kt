@@ -658,76 +658,76 @@ class ChannelControllerImpl(
         when (event) {
             is NewMessageEvent, is MessageUpdatedEvent, is MessageDeletedEvent, is NotificationMessageNew -> {
                 upsertEventMessage(event.message)
-                // unhide the channel
                 if (isHidden()) {
+                    // unhide the channel
                     setHidden(false)
                 }
             }
-            is ReactionNewEvent, is ReactionDeletedEvent -> {
-                upsertEventMessage(event.message)
-            }
-            is MemberRemovedEvent -> {
-                deleteMember(event.user!!.id)
-            }
+            is ReactionNewEvent, is ReactionDeletedEvent -> upsertEventMessage(event.message)
+            is MemberRemovedEvent -> event.user?.id?.let {
+                deleteMember(it)
+            } ?: logUnexpectedEventModelStructure(event)
             is MemberAddedEvent, is MemberUpdatedEvent, is NotificationAddedToChannelEvent -> {
-                // add /remove the members etc
                 event.channel?.members?.let {
                     upsertMembers(it)
-                }
+                } ?: logUnexpectedEventModelStructure(event)
             }
-
-            is UserPresenceChanged -> {
-                upsertUserPresence(event.user!!)
-            }
-
-            is UserUpdated -> {
-                upsertUser(event.user!!)
-            }
-
-            is UserStartWatchingEvent -> {
-                upsertWatcher(event.user!!)
-            }
-            is UserStopWatchingEvent -> {
-                deleteWatcher(event.user!!)
-            }
-            is ChannelUpdatedEvent -> {
-                event.channel?.let { updateChannelData(it) }
-            }
-            is ChannelHiddenEvent -> {
-                event.channel?.let { setHidden(true) }
-            }
-            is ChannelVisible -> {
-                event.channel?.let { setHidden(false) }
-            }
+            is UserPresenceChanged -> event.user?.let {
+                upsertUserPresence(it)
+            } ?: logUnexpectedEventModelStructure(event)
+            is UserUpdated -> event.user?.let {
+                upsertUser(it)
+            } ?: logUnexpectedEventModelStructure(event)
+            is UserStartWatchingEvent -> event.user?.let {
+                upsertWatcher(it)
+            } ?: logUnexpectedEventModelStructure(event)
+            is UserStopWatchingEvent -> event.user?.let {
+                deleteWatcher(it)
+            } ?: logUnexpectedEventModelStructure(event)
+            is ChannelUpdatedEvent -> event.channel?.let {
+                updateChannelData(it)
+            } ?: logUnexpectedEventModelStructure(event)
+            is ChannelHiddenEvent -> event.channel?.let {
+                setHidden(true)
+            } ?: logUnexpectedEventModelStructure(event)
+            is ChannelVisible -> event.channel?.let {
+                setHidden(false)
+            } ?: logUnexpectedEventModelStructure(event)
             is ChannelDeletedEvent -> {
-                removeMessagesBefore(event.createdAt!!)
-                val channelData = _channelData.value
-                channelData?.let {
-                    it.deletedAt = event.createdAt!!
-                    _channelData.postValue(it)
+                event.createdAt?.let { createdAt ->
+                    removeMessagesBefore(createdAt)
+                    _channelData.value?.let { channelData ->
+                        channelData.deletedAt = createdAt
+                        _channelData.postValue(channelData)
+                    } ?: logUnexpectedEventModelStructure(event)
+                } ?: logUnexpectedEventModelStructure(event)
+            }
+            is ChannelTruncated, is NotificationChannelTruncated -> event.createdAt?.let {
+                removeMessagesBefore(it)
+            } ?: logUnexpectedEventModelStructure(event)
+            is TypingStopEvent -> event.user?.id?.let {
+                setTyping(it, null)
+            } ?: logUnexpectedEventModelStructure(event)
+            is TypingStartEvent -> event.user?.id?.let {
+                setTyping(it, event)
+            } ?: logUnexpectedEventModelStructure(event)
+            is MessageReadEvent -> {
+                val user = event.user
+                val createdAt = event.createdAt
+                if (user != null && createdAt != null) {
+                    updateRead(ChannelUserRead(user, createdAt))
+                } else {
+                    logUnexpectedEventModelStructure(event)
                 }
             }
-            is ChannelTruncated, is NotificationChannelTruncated -> {
-                removeMessagesBefore(event.createdAt!!)
-            }
-            is TypingStopEvent -> {
-                setTyping(event.user?.id!!, null)
-            }
-            is TypingStartEvent -> {
-                setTyping(event.user?.id!!, event)
-            }
-            is MessageReadEvent -> {
-                val read = ChannelUserRead(event.user!!, event.createdAt!!)
-                updateRead(read)
-            }
-            is NotificationMarkReadEvent -> {
-                val user = domainImpl.currentUser
-                val date = event.createdAt!!
-                val read = ChannelUserRead(user, date)
-                updateRead(read)
-            }
+            is NotificationMarkReadEvent -> event.createdAt?.let {
+                updateRead(ChannelUserRead(domainImpl.currentUser, it))
+            } ?: logUnexpectedEventModelStructure(event)
         }
     }
+
+    private fun logUnexpectedEventModelStructure(event: ChatEvent) =
+        logger.logI("Received $event which seems to have unexpected model structure")
 
     private fun upsertUserPresence(user: User) {
         val userId = user.id
