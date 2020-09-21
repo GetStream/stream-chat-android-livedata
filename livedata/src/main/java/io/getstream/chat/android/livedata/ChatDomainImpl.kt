@@ -47,9 +47,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import java.lang.Thread.sleep
-import java.util.Date
-import java.util.InputMismatchException
-import java.util.UUID
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.collections.set
 
@@ -641,8 +639,8 @@ class ChatDomainImpl private constructor(
             acc + channel.createdByUserId.orEmpty() +
                 channel.members.keys +
                 channel.reads.keys +
-                channelMessagesMap[channel.cid]?.map { message ->
-                    message.userId + message.latestReactions.map(ReactionEntity::userId)
+                channelMessagesMap[channel.cid]?.flatMap { message ->
+                    message.latestReactions.map(ReactionEntity::userId) + message.userId
                 }.orEmpty()
         }
 
