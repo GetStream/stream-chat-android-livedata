@@ -1,5 +1,6 @@
 package io.getstream.chat.android.livedata.utils
 
+import android.os.Looper
 import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import io.getstream.chat.android.client.utils.Result
@@ -8,6 +9,7 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 interface Call2<T> {
 
@@ -21,7 +23,7 @@ interface Call2<T> {
     suspend fun invoke(): Result<T>
 }
 
-class CallImpl2<T>(var runnable: suspend () -> Result<T>, var scope: CoroutineScope = GlobalScope) :
+class CallImpl2<T>(var runnable: suspend () -> Result<T>, var scope: CoroutineScope = GlobalScope, var mainThreadAllowed: Boolean = false) :
     Call2<T> {
     var canceled: Boolean = false
 
@@ -30,8 +32,11 @@ class CallImpl2<T>(var runnable: suspend () -> Result<T>, var scope: CoroutineSc
     }
 
     override fun execute(): Result<T> {
-        val result = runBlocking(scope.coroutineContext) { runnable() }
-        return result
+        val isMainThread = Looper.getMainLooper().thread == Thread.currentThread()
+        if (isMainThread && !mainThreadAllowed) {
+            throw IOException("This use case shouldn't be run on the main thread. Be sure to use enqueue instead of execute or run the execute call in the IO thread.")
+        }
+        return runBlocking(scope.coroutineContext) { runnable() }
     }
 
     override suspend fun invoke(): Result<T> = withContext(scope.coroutineContext) {

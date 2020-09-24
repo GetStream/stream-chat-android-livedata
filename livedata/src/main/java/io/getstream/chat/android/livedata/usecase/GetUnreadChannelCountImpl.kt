@@ -26,7 +26,7 @@ class GetUnreadChannelCountImpl(var domainImpl: ChatDomainImpl) : GetUnreadChann
         }
         return CallImpl2<LiveData<Int>>(
             runnable,
-            domainImpl.scope
+            domainImpl.scope, true
         )
     }
 }

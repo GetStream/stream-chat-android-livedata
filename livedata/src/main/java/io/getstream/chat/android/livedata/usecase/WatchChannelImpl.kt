@@ -38,7 +38,7 @@ class WatchChannelImpl(var domainImpl: ChatDomainImpl) : WatchChannel {
         }
         return CallImpl2<ChannelController>(
             runnable,
-            channelControllerImpl.scope
+            channelControllerImpl.scope, true
         )
     }
 }

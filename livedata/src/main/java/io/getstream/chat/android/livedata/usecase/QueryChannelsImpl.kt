@@ -40,7 +40,7 @@ class QueryChannelsImpl(var domainImpl: ChatDomainImpl) : QueryChannels {
         }
         return CallImpl2(
             runnable,
-            queryChannelsControllerImpl.scope
+            queryChannelsControllerImpl.scope, true
         )
     }
 }
