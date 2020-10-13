@@ -15,13 +15,6 @@ import org.junit.runner.RunWith
 import java.text.SimpleDateFormat
 import java.util.Date
 
-/**
- * TODO:
- * - validate how the initial data flow works with .observe
- * - complete testing
- * - see if we need the wrapper
- */
-
 @RunWith(AndroidJUnit4::class)
 class MessageListItemLiveDataTest {
 
@@ -33,7 +26,10 @@ class MessageListItemLiveDataTest {
         val reads: LiveData<List<ChannelUserRead>> = MutableLiveData(listOf())
         val typing: LiveData<List<User>> = MutableLiveData(listOf())
 
-        return MessageListItemLiveData(user, messages, reads, typing)
+        return MessageListItemLiveData(user, messages, reads, typing) {
+            val day = Date(it.createdAt?.time ?: 0)
+            SimpleDateFormat("MM / dd").format(day)
+        }
     }
 
     fun oneMessage(): MessageListItemLiveData {
@@ -44,7 +40,10 @@ class MessageListItemLiveDataTest {
         val reads: LiveData<List<ChannelUserRead>> = MutableLiveData(listOf())
         val typing: LiveData<List<User>> = MutableLiveData(listOf())
 
-        return MessageListItemLiveData(user, messages, reads, typing)
+        return MessageListItemLiveData(user, messages, reads, typing) {
+            val day = Date(it.createdAt?.time ?: 0)
+            SimpleDateFormat("MM / dd").format(day)
+        }
     }
 
     fun manyMessages(): MessageListItemLiveData {
@@ -131,8 +130,8 @@ class MessageListItemLiveDataTest {
     fun `First message should contain the read state`() {
         val messageListItemLd = manyMessages()
         val items = messageListItemLd.getOrAwaitValue()
-        val lastMessage = items.first() as MessageListItem.MessageItem
-        Truth.assertThat(lastMessage.messageReadBy).isNotEmpty()
+        val firstMessage = items[1] as MessageListItem.MessageItem
+        Truth.assertThat(firstMessage.messageReadBy).isNotEmpty()
     }
 
     // test message grouping

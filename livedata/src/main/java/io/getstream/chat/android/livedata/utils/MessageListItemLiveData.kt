@@ -123,7 +123,7 @@ class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveD
     private fun addReads(messages: List<MessageListItem>, reads: List<ChannelUserRead>?): List<MessageListItem> {
         if (reads == null || reads.isEmpty()) return messages
 
-        val sortedReads = reads.sortedByDescending { it.lastRead }.toMutableList()
+        val sortedReads = reads.sortedBy { it.lastRead }.toMutableList()
         val messagesCopy = messages.toMutableList()
 
         // start at the end
@@ -134,7 +134,7 @@ class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveD
                     while (sortedReads.isNotEmpty()) {
                         // use the list of sorted reads
                         val last = sortedReads.last()
-                        if (it.before(last.lastRead)) {
+                        if (it.before(last.lastRead) || it == last.lastRead) {
                             // we got a match
                             sortedReads.removeLast()
                             val reversedIndex = messages.size - i - 1
