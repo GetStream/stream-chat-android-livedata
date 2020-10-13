@@ -39,7 +39,7 @@ import java.util.Date
  * - How do we handle threads. I don't like the current setup
  *
  */
-data class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveData<List<Message>>, val readsLiveData: LiveData<List<ChannelUserRead>>, val typingLiveData: LiveData<List<User>>? = null, val dateSeparator: ((m: Message) -> String?)? = null) : MediatorLiveData<List<MessageListItem>>() {
+class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveData<List<Message>>, val readsLiveData: LiveData<List<ChannelUserRead>>, val typingLiveData: LiveData<List<User>>? = null, val dateSeparator: ((m: Message) -> String?)? = null) : MediatorLiveData<List<MessageListItem>>() {
 
     private var messageItemsBase = listOf<MessageListItem>()
     private var messageItemsWithReads = listOf<MessageListItem>()
@@ -127,8 +127,7 @@ data class MessageListItemLiveData(val currentUser: User, val messagesLiveData: 
         val messagesCopy = messages.toMutableList()
 
         // start at the end
-        for (messageItem in messages.reversed()) {
-            var index = messages.size - 1
+        for ((i, messageItem) in messages.reversed().withIndex()) {
             if (messageItem is MessageListItem.MessageItem) {
                 val messageItem = messageItem as MessageListItem.MessageItem
                 messageItem.message.createdAt?.let {
@@ -138,11 +137,12 @@ data class MessageListItemLiveData(val currentUser: User, val messagesLiveData: 
                         if (it.before(last.lastRead)) {
                             // we got a match
                             sortedReads.removeLast()
-                            val messageItemCopy = messagesCopy[index] as MessageListItem.MessageItem
+                            val reversedIndex = messages.size - i - 1
+                            val messageItemCopy = messagesCopy[reversedIndex] as MessageListItem.MessageItem
                             val readBy = listOf(last) + messageItemCopy.messageReadBy
                             val updatedMessageItem = messageItem.copy(messageReadBy = readBy)
                             // update the message in the message copy
-                            messagesCopy[index] = updatedMessageItem
+                            messagesCopy[reversedIndex] = updatedMessageItem
                         } else {
                             // search further in the past for matches
                             break
@@ -150,29 +150,31 @@ data class MessageListItemLiveData(val currentUser: User, val messagesLiveData: 
                     }
                 }
             }
-            index--
         }
 
         return messagesCopy
     }
 
-    private fun messagesChanged(messages: List<Message>) {
+    internal fun messagesChanged(messages: List<Message>): List<MessageListItem> {
         messageItemsBase = groupMessages()
         messageItemsWithReads = addReads(messageItemsBase, readsLiveData.value)
         value = messageItemsWithReads
+        return messageItemsWithReads
     }
 
-    private fun readsChanged(reads: List<ChannelUserRead>) {
+    internal fun readsChanged(reads: List<ChannelUserRead>): List<MessageListItem> {
         messageItemsWithReads = addReads(messageItemsBase, readsLiveData.value)
         value = messageItemsWithReads
+        return messageItemsWithReads
     }
 
-    private fun typingChanged(users: List<User>) {
+    internal fun typingChanged(users: List<User>): List<MessageListItem> {
         var output = messageItemsWithReads
         val typingUsers = users.filter { it.id != currentUser.id }
         if (typingUsers.isNotEmpty()) {
             output = output + MessageListItem.TypingItem(typingUsers)
         }
         value = output
+        return output
     }
 }
