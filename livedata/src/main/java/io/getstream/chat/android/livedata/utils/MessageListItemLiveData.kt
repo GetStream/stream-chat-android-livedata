@@ -11,7 +11,7 @@ import java.util.Date
  * It's common for messaging UIs to interleave and group messages
  *
  * - subsequent messages from the same user are typically grouped
- * - read state is typically shown
+ * - read state is typically shown (either as part of the message or separately)
  * - date separators are common
  * - typing indicators are typically shown at the bottom
  *
@@ -31,18 +31,25 @@ import java.util.Date
  * - Kotlin
  * - Typing indicators can be turned on/off
  * - Date separators can be turned off and are configurable
+ * - Read state matches to the right message
  * - Leverages MediatorLiveData to improve handling of null values
  * - Efficient algorithm for updating read state
  * - Makes the MessageListItem immutable to prevent future bugs
  *
- * TODO:
- * - How do we handle threads. I don't like the current setup
- *
  */
-class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveData<List<Message>>, val readsLiveData: LiveData<List<ChannelUserRead>>, val typingLiveData: LiveData<List<User>>? = null, val dateSeparator: ((m: Message) -> String?)? = null) : MediatorLiveData<List<MessageListItem>>() {
+class MessageListItemLiveData(
+    val currentUser: User,
+    val messagesLiveData: LiveData<List<Message>>,
+    val readsLiveData: LiveData<List<ChannelUserRead>>,
+    val typingLiveData: LiveData<List<User>>? = null,
+    val isThread: Boolean = false,
+    val dateSeparator: ((m: Message) -> String?)? = null
+) : MediatorLiveData<MessageListItemWrapper>() {
 
+    private var hasNewMessages: Boolean = false
     private var messageItemsBase = listOf<MessageListItem>()
     private var messageItemsWithReads = listOf<MessageListItem>()
+    private var typingUsers = listOf<User>()
 
     private var lastMessageID = ""
 
@@ -65,8 +72,8 @@ class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveD
 
         if (messages == null || messages.isEmpty()) return emptyList()
 
-        var hasNewMessages = false
-        val newlastMessageID: String = messages.get(messages.size - 1).id
+        hasNewMessages = false
+        val newlastMessageID: String = messages[messages.size - 1].id
         if (newlastMessageID != lastMessageID) {
             hasNewMessages = true
         }
@@ -79,7 +86,7 @@ class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveD
         val topIndex = Math.max(0, size - 1)
 
         for (i in 0 until size) {
-            val message: Message = messages.get(i)
+            val message: Message = messages[i]
             var nextMessage: Message? = null
             if (i + 1 <= topIndex) {
                 nextMessage = messages[i + 1]
@@ -113,7 +120,7 @@ class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveD
                 }
             }
 
-            val messageListItem: MessageListItem = MessageListItem.MessageItem(message, positions)
+            val messageListItem: MessageListItem = MessageListItem.MessageItem(message, positions, isMine = message.user.id == currentUser.id)
             entities.add(messageListItem)
             previousMessage = message
         }
@@ -121,12 +128,12 @@ class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveD
     }
 
     private fun addReads(messages: List<MessageListItem>, reads: List<ChannelUserRead>?): List<MessageListItem> {
-        if (reads == null || reads.isEmpty()) return messages
+        if (reads == null || reads.isEmpty() || messages.isEmpty()) return messages
 
         val sortedReads = reads.sortedBy { it.lastRead }.toMutableList()
         val messagesCopy = messages.toMutableList()
 
-        // start at the end
+        // start at the end, optimized for the most common scenario that most people are watching the chat
         for ((i, messageItem) in messages.reversed().withIndex()) {
             if (messageItem is MessageListItem.MessageItem) {
                 val messageItem = messageItem as MessageListItem.MessageItem
@@ -155,26 +162,42 @@ class MessageListItemLiveData(val currentUser: User, val messagesLiveData: LiveD
         return messagesCopy
     }
 
+    internal fun wrapMessages(items: List<MessageListItem>): MessageListItemWrapper {
+        return MessageListItemWrapper(items = items, isThread = isThread, isTyping = typingUsers.isNotEmpty(), hasNewMessages = hasNewMessages)
+    }
+
     internal fun messagesChanged(messages: List<Message>): List<MessageListItem> {
         messageItemsBase = groupMessages()
         messageItemsWithReads = addReads(messageItemsBase, readsLiveData.value)
-        value = messageItemsWithReads
-        return messageItemsWithReads
+        val out = messageItemsWithReads + usersAsTypingItems()
+        val wrapped = wrapMessages(out)
+        value = wrapped.copy(hasNewMessages = hasNewMessages)
+        return out
     }
 
     internal fun readsChanged(reads: List<ChannelUserRead>): List<MessageListItem> {
         messageItemsWithReads = addReads(messageItemsBase, readsLiveData.value)
-        value = messageItemsWithReads
-        return messageItemsWithReads
+        val out = messageItemsWithReads + usersAsTypingItems()
+        value = wrapMessages(out)
+        return out
+    }
+
+    internal fun usersAsTypingItems(): List<MessageListItem> {
+        return if (typingUsers.isNotEmpty()) {
+            listOf(MessageListItem.TypingItem(typingUsers))
+        } else {
+            emptyList()
+        }
     }
 
     internal fun typingChanged(users: List<User>): List<MessageListItem> {
-        var output = messageItemsWithReads
-        val typingUsers = users.filter { it.id != currentUser.id }
-        if (typingUsers.isNotEmpty()) {
-            output = output + MessageListItem.TypingItem(typingUsers)
+        val priorState = typingUsers.toList()
+        typingUsers = users.filter { it.id != currentUser.id }
+        val out = messageItemsWithReads + usersAsTypingItems()
+
+        if (typingUsers != priorState) {
+            value = wrapMessages(out)
         }
-        value = output
-        return output
+        return out
     }
 }

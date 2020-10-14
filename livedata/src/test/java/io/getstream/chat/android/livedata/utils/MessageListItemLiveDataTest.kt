@@ -1,15 +1,22 @@
 package io.getstream.chat.android.livedata.utils
 
+import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.Observer
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth
+import com.nhaarman.mockitokotlin2.mock
+import com.nhaarman.mockitokotlin2.times
+import com.nhaarman.mockitokotlin2.verify
 import io.getstream.chat.android.client.models.ChannelUserRead
 import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.livedata.randomMessage
 import io.getstream.chat.android.livedata.randomUser
 import io.getstream.chat.android.livedata.utils.MessageListItem.TypingItem
+import org.amshove.kluent.any
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.text.SimpleDateFormat
@@ -18,43 +25,40 @@ import java.util.Date
 @RunWith(AndroidJUnit4::class)
 class MessageListItemLiveDataTest {
 
-    fun emptyMessages(): MessageListItemLiveData {
-        val message = randomMessage()
-        val user = randomUser()
+    @get:Rule
+    val rule = InstantTaskExecutorRule()
+    private val currentUser = randomUser()
+
+    private fun simpleDateGroups(message: Message): String? {
+        val day = Date(message.createdAt?.time ?: 0)
+        return SimpleDateFormat("MM / dd").format(day)
+    }
+
+    private fun emptyMessages(): MessageListItemLiveData {
         val messages: LiveData<List<Message>> = MutableLiveData(listOf())
-        val read = ChannelUserRead(user, Date())
         val reads: LiveData<List<ChannelUserRead>> = MutableLiveData(listOf())
         val typing: LiveData<List<User>> = MutableLiveData(listOf())
 
-        return MessageListItemLiveData(user, messages, reads, typing) {
-            val day = Date(it.createdAt?.time ?: 0)
-            SimpleDateFormat("MM / dd").format(day)
-        }
+        return MessageListItemLiveData(currentUser, messages, reads, typing, false, ::simpleDateGroups)
     }
 
-    fun oneMessage(): MessageListItemLiveData {
+    private fun oneMessage(): MessageListItemLiveData {
         val message = randomMessage()
-        val user = randomUser()
         val messages: LiveData<List<Message>> = MutableLiveData(listOf(message))
-        val read = ChannelUserRead(user, Date())
         val reads: LiveData<List<ChannelUserRead>> = MutableLiveData(listOf())
         val typing: LiveData<List<User>> = MutableLiveData(listOf())
 
-        return MessageListItemLiveData(user, messages, reads, typing) {
-            val day = Date(it.createdAt?.time ?: 0)
-            SimpleDateFormat("MM / dd").format(day)
-        }
+        return MessageListItemLiveData(currentUser, messages, reads, typing, false, ::simpleDateGroups)
     }
 
-    fun manyMessages(): MessageListItemLiveData {
+    private fun manyMessages(): MessageListItemLiveData {
         val messages = mutableListOf<Message>()
-        val currentUser = randomUser()
         val users = listOf(randomUser(), randomUser(), randomUser())
 
-        for ((i, x) in (0..2).withIndex()) {
+        for (i in (0..2)) {
             val user = users[i]
             for (y in 0..2) {
-                val message = randomMessage(user = user, createdAt = calendar(2020, 11, i + 1))
+                val message = randomMessage(user = user, createdAt = calendar(2020, 11, i + 1, i + y))
                 messages.add(message)
             }
         }
@@ -65,20 +69,17 @@ class MessageListItemLiveDataTest {
         val reads: LiveData<List<ChannelUserRead>> = MutableLiveData(listOf(read1, read2))
         val typing: LiveData<List<User>> = MutableLiveData(listOf())
 
-        return MessageListItemLiveData(currentUser, messagesLd, reads, typing) {
-            val day = Date(it.createdAt?.time ?: 0)
-            SimpleDateFormat("MM / dd").format(day)
-        }
+        return MessageListItemLiveData(currentUser, messagesLd, reads, typing, false, ::simpleDateGroups)
     }
 
     // livedata testing
     @Test
     fun `Observe should trigger a recompute`() {
         val many = oneMessage()
-        val items = many.getOrAwaitValue()
+        val items = many.getOrAwaitValue().items
         Truth.assertThat(items.size).isEqualTo(2)
         val empty = emptyMessages()
-        val items2 = empty.getOrAwaitValue()
+        val items2 = empty.getOrAwaitValue().items
         Truth.assertThat(items2.size).isEqualTo(0)
     }
 
@@ -121,7 +122,7 @@ class MessageListItemLiveDataTest {
     @Test
     fun `Last message should contain the read state`() {
         val messageListItemLd = manyMessages()
-        val items = messageListItemLd.getOrAwaitValue()
+        val items = messageListItemLd.getOrAwaitValue().items
         val lastMessage = items.last() as MessageListItem.MessageItem
         Truth.assertThat(lastMessage.messageReadBy).isNotEmpty()
     }
@@ -129,8 +130,9 @@ class MessageListItemLiveDataTest {
     @Test
     fun `First message should contain the read state`() {
         val messageListItemLd = manyMessages()
-        val items = messageListItemLd.getOrAwaitValue()
-        val firstMessage = items[1] as MessageListItem.MessageItem
+        val items = messageListItemLd.getOrAwaitValue().items
+        val messages = items.filterIsInstance<MessageListItem.MessageItem>()
+        val firstMessage = messages.first()
         Truth.assertThat(firstMessage.messageReadBy).isNotEmpty()
     }
 
@@ -139,7 +141,7 @@ class MessageListItemLiveDataTest {
     fun `There should be 3 messages with a position Top`() {
         val messageListItemLd = manyMessages()
         val topMessages = mutableListOf<MessageListItem.Position>()
-        val items = messageListItemLd.getOrAwaitValue()
+        val items = messageListItemLd.getOrAwaitValue().items
         for (item in items) {
             if (item is MessageListItem.MessageItem) {
                 val messageItem = item as MessageListItem.MessageItem
@@ -156,12 +158,21 @@ class MessageListItemLiveDataTest {
     fun `There should be 3 date separators`() {
         val messageListItemLd = manyMessages()
         val separators = mutableListOf<MessageListItem.DateSeparatorItem>()
-        val items = messageListItemLd.getOrAwaitValue()
+        val items = messageListItemLd.getOrAwaitValue().items
         for (item in items) {
             if (item is MessageListItem.DateSeparatorItem) {
                 separators.add(item)
             }
         }
         Truth.assertThat(separators.size).isEqualTo(3)
+    }
+
+    @Test
+    fun `When the user is the only one typing, no broadcast is made`() {
+        val messageListItemLd = manyMessages()
+        val testObserver: Observer<MessageListItemWrapper> = mock()
+        messageListItemLd.observeForever(testObserver)
+        messageListItemLd.typingChanged(listOf(messageListItemLd.currentUser))
+        verify(testObserver, times(2)).onChanged(any())
     }
 }
