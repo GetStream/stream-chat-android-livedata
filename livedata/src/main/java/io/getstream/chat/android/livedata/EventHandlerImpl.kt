@@ -58,6 +58,7 @@ import io.getstream.chat.android.client.events.UsersMutedEvent
 import io.getstream.chat.android.client.events.UsersUnmutedEvent
 import io.getstream.chat.android.client.models.Channel
 import io.getstream.chat.android.client.models.ChannelUserRead
+import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.livedata.entity.ChannelEntity
 import io.getstream.chat.android.livedata.entity.MessageEntity
@@ -95,7 +96,13 @@ class EventHandlerImpl(
         val messagesToFetch = mutableSetOf<String>()
 
         events.filterIsInstance<CidEvent>().onEach { channelsToFetch += it.cid }
-        users += events.filterIsInstance<UserEvent>().map(UserEvent::user).associateBy(User::id)
+        // For some reason backend is not sending us the user instance into some events that they should
+        // and we are not able to identify which event type is. Gson, because it is using reflection,
+        // inject a null instance into property `user` that doesn't allow null values.
+        // This is a workaround, while we identify which event type is, that omit null values without
+        // break our public API
+        @Suppress("USELESS_CAST")
+        users += events.filterIsInstance<UserEvent>().mapNotNull { it.user as User? }.associateBy(User::id)
 
         // step 1. see which data we need to retrieve from offline storage
         for (event in events) {
@@ -162,6 +169,15 @@ class EventHandlerImpl(
         val channelMap = domainImpl.repos.channels.select(channelsToFetch.toList()).associateBy { it.cid }
         val messageMap = domainImpl.repos.messages.select(messagesToFetch.toList()).associateBy { it.id }
 
+        fun addMessageData(cid: String, message: Message) {
+            users.putAll(message.users().associateBy(User::id))
+            messages[message.id] = MessageEntity(message)
+            channelMap[cid]?.let {
+                it.addMessage(MessageEntity(message))
+                channels[it.cid] = it
+            }
+        }
+
         // step 2. second pass through the events, make a list of what we need to update
         loop@ for (event in events) {
             @Suppress("IMPLICIT_CAST_TO_ANY")
@@ -171,24 +187,20 @@ class EventHandlerImpl(
                 is NewMessageEvent -> {
                     event.message.cid = event.cid
                     event.totalUnreadCount?.let { domainImpl.setTotalUnreadCount(it) }
-                    users.putAll(event.message.users().associateBy(User::id))
-                    messages[event.message.id] = MessageEntity(event.message)
+                    addMessageData(event.cid, event.message)
                 }
                 is MessageDeletedEvent -> {
                     event.message.cid = event.cid
-                    users.putAll(event.message.users().associateBy(User::id))
-                    messages[event.message.id] = MessageEntity(event.message)
+                    addMessageData(event.cid, event.message)
                 }
                 is MessageUpdatedEvent -> {
                     event.message.cid = event.cid
-                    users.putAll(event.message.users().associateBy(User::id))
-                    messages[event.message.id] = MessageEntity(event.message)
+                    addMessageData(event.cid, event.message)
                 }
                 is NotificationMessageNewEvent -> {
                     event.message.cid = event.cid
                     event.totalUnreadCount?.let { domainImpl.setTotalUnreadCount(it) }
-                    users.putAll(event.message.users().associateBy(User::id))
-                    messages[event.message.id] = MessageEntity(event.message)
+                    addMessageData(event.cid, event.message)
                 }
                 is NotificationAddedToChannelEvent -> {
                     users.putAll(event.channel.users().associateBy(User::id))
@@ -211,18 +223,6 @@ class EventHandlerImpl(
                         hidden = false
                     }
                 }
-                is ChannelUserBannedEvent -> {
-                    users[event.user.id] = event.user
-                }
-                is GlobalUserBannedEvent -> {
-                    users[event.user.id] = event.user.apply { banned = true }
-                }
-                is ChannelUserUnbannedEvent -> {
-                    users[event.user.id] = event.user
-                }
-                is GlobalUserUnbannedEvent -> {
-                    users[event.user.id] = event.user.apply { banned = false }
-                }
                 is NotificationMutesUpdatedEvent -> {
                     domainImpl.updateCurrentUser(event.me)
                 }
@@ -231,15 +231,11 @@ class EventHandlerImpl(
                 }
                 is MessageReadEvent -> {
                     // get the channel, update reads, write the channel
-                    users[event.user.id] = event.user
                     channelMap[event.cid]?.let {
                         channels[it.cid] = it.apply {
                             updateReads(ChannelUserRead(user = event.user, lastRead = event.createdAt))
                         }
                     }
-                }
-                is UserUpdatedEvent -> {
-                    users[event.user.id] = event.user
                 }
                 is ReactionNewEvent -> {
                     // get the message, update the reaction data, update the message
@@ -346,43 +342,44 @@ class EventHandlerImpl(
                 }
                 is NotificationMarkReadEvent -> {
                     event.totalUnreadCount?.let { domainImpl.setTotalUnreadCount(it) }
-                    users[event.user.id] = event.user
                     channelMap[event.cid]?.let {
                         channels[it.cid] = it.apply {
                             updateReads(ChannelUserRead(user = event.user, lastRead = event.createdAt))
                         }
                     }
                 }
-                is UserDeletedEvent -> {
-                    users[event.user.id] = event.user
-                }
                 is UserMutedEvent -> {
                     users[event.targetUser.id] = event.targetUser
-                    users[event.user.id] = event.user
                 }
                 is UsersMutedEvent -> {
                     event.targetUsers.forEach { users[it.id] = it }
-                    users[event.user.id] = event.user
-                }
-                is UserPresenceChangedEvent -> {
-                    users[event.user.id] = event.user
-                }
-                is UserStartWatchingEvent -> {
-                    users[event.user.id] = event.user
-                }
-                is UserStopWatchingEvent -> {
-                    users[event.user.id] = event.user
                 }
                 is UserUnmutedEvent -> {
-                    users[event.user.id] = event.user
                     users[event.targetUser.id] = event.targetUser
                 }
                 is UsersUnmutedEvent -> {
                     event.targetUsers.forEach { users[it.id] = it }
-                    users[event.user.id] = event.user
                 }
-                is TypingStartEvent, is TypingStopEvent, is HealthEvent, is ConnectingEvent, is DisconnectedEvent,
-                is ErrorEvent, is UnknownEvent -> Unit
+                is GlobalUserBannedEvent -> {
+                    users[event.user.id] = event.user.apply { banned = true }
+                }
+                is GlobalUserUnbannedEvent -> {
+                    users[event.user.id] = event.user.apply { banned = false }
+                }
+                is TypingStartEvent,
+                is TypingStopEvent,
+                is HealthEvent,
+                is ConnectingEvent,
+                is DisconnectedEvent,
+                is ErrorEvent,
+                is UnknownEvent,
+                is ChannelUserBannedEvent,
+                is ChannelUserUnbannedEvent,
+                is UserUpdatedEvent,
+                is UserDeletedEvent,
+                is UserPresenceChangedEvent,
+                is UserStartWatchingEvent,
+                is UserStopWatchingEvent -> Unit
             }.exhaustive
         }
         // actually insert the data

@@ -48,6 +48,7 @@ import io.getstream.chat.android.client.utils.Result
 import io.getstream.chat.android.client.utils.SyncStatus
 import io.getstream.chat.android.livedata.ChannelData
 import io.getstream.chat.android.livedata.ChatDomainImpl
+import io.getstream.chat.android.livedata.controller.helper.MessageHelper
 import io.getstream.chat.android.livedata.entity.ChannelConfigEntity
 import io.getstream.chat.android.livedata.entity.ChannelEntityPair
 import io.getstream.chat.android.livedata.entity.MessageEntity
@@ -197,6 +198,7 @@ class ChannelControllerImpl(
 
     private val threadControllerMap: ConcurrentHashMap<String, ThreadControllerImpl> =
         ConcurrentHashMap()
+    private val messageHelper = MessageHelper()
 
     fun getThread(threadId: String): ThreadControllerImpl = threadControllerMap.getOrPut(threadId) {
         ThreadControllerImpl(threadId, this, client)
@@ -380,20 +382,31 @@ class ChannelControllerImpl(
 
     suspend fun runChannelQuery(pagination: QueryChannelPaginationRequest): Result<Channel> {
         // first we load the data from room and update the messages and channel livedata
-        val channel = runChannelQueryOffline(pagination)
+        val queryOfflineJob = scope.async { runChannelQueryOffline(pagination) }
+        // start the online query before queryOfflineJob.await
+        val queryOnlineJob = if (domainImpl.isOnline()) { scope.async { runChannelQueryOnline(pagination) } } else { null }
+
+        val channelEntityPair = queryOfflineJob.await()
+        if (channelEntityPair != null) {
+            updateLiveDataFromChannelEntityPair(channelEntityPair)
+        }
 
         // if we are online we we run the actual API call
-
-        return if (domainImpl.isOnline()) {
-            runChannelQueryOnline(pagination)
+        return if (queryOnlineJob != null) {
+            val response = queryOnlineJob.await()
+            if (response.isSuccess) {
+                updateLiveDataFromChannel(response.data())
+            }
+            response
         } else {
             // if we are not offline we mark it as needing recovery
             recoveryNeeded = true
+            val channel = channelEntityPair?.channel
             Result(channel, null)
         }
     }
 
-    suspend fun runChannelQueryOffline(pagination: QueryChannelPaginationRequest): Channel? {
+    suspend fun runChannelQueryOffline(pagination: QueryChannelPaginationRequest): ChannelEntityPair? {
         val channelPair = domainImpl.selectAndEnrichChannel(cid, pagination)
 
         channelPair?.let {
@@ -401,11 +414,10 @@ class ChannelControllerImpl(
             it.channel.config = domainImpl.getChannelConfig(it.channel.type)
             _loading.postValue(false)
 
-            updateLiveDataFromChannelEntityPair(it)
             logger.logI("Loaded channel ${channel.cid} from offline storage with ${channel.messages.size} messages")
         }
 
-        return channelPair?.channel
+        return channelPair
     }
 
     suspend fun runChannelQueryOnline(pagination: QueryChannelPaginationRequest): Result<Channel> {
@@ -425,7 +437,7 @@ class ChannelControllerImpl(
             // first thing here needs to be updating configs otherwise we have a race with receiving events
             val configEntities = ChannelConfigEntity(channelResponse.type, channelResponse.config)
             domainImpl.repos.configs.insert(listOf(configEntities))
-            updateLiveDataFromChannel(channelResponse)
+
             domainImpl.storeStateForChannel(channelResponse)
         } else {
             recoveryNeeded = true
@@ -530,38 +542,36 @@ class ChannelControllerImpl(
         attachment: Attachment,
         attachmentTransformer: ((at: Attachment, file: File) -> Attachment)? = null
     ): Result<Attachment> {
-        val file = checkNotNull(attachment.upload) {
-            "upload file shouldn't be called on attachment without a attachment.upload"
-        }
+        val file =
+            checkNotNull(attachment.upload) { "upload file shouldn't be called on attachment without a attachment.upload" }
         val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension)
-        val attachmentType = if (mimeType.isImageMimetype()) "image" else "file"
-        val pathResult = if (attachmentType == "image") {
+        val attachmentType = if (mimeType.isImageMimetype()) {
+            TYPE_IMAGE
+        } else {
+            TYPE_FILE
+        }
+        val pathResult = if (attachmentType == TYPE_IMAGE) {
             sendImage(file)
         } else {
             sendFile(file)
         }
-        var newAttachment: Attachment
-        var uploadError: ChatError? = null
+        val url = if (pathResult.isError) null else pathResult.data()
+        val uploadState =
+            if (pathResult.isError) Attachment.UploadState.Failed(pathResult.error()) else Attachment.UploadState.Success
 
-        if (pathResult.isError) {
-            uploadError = pathResult.error()
-
-            newAttachment =
-                attachment.copy(uploadState = Attachment.UploadState.Failed(uploadError))
-        } else {
-            val uploadPath = pathResult.data()
-            newAttachment = attachment.copy(
-                name = file.name,
-                fileSize = file.length().toInt(),
-                mimeType = mimeType?.toString() ?: "",
-                url = uploadPath,
-                uploadState = Attachment.UploadState.Success,
-                type = attachmentType
-            ).apply {
-                if (attachmentType == "image") {
-                    imageUrl = uploadPath
+        var newAttachment = attachment.copy(
+            name = file.name,
+            fileSize = file.length().toInt(),
+            mimeType = mimeType ?: "",
+            url = url,
+            uploadState = uploadState,
+            type = attachmentType
+        ).apply {
+            url?.let {
+                if (attachmentType == TYPE_IMAGE) {
+                    imageUrl = it
                 } else {
-                    assetUrl = uploadPath
+                    assetUrl = it
                 }
             }
         }
@@ -571,7 +581,7 @@ class ChannelControllerImpl(
             newAttachment = attachmentTransformer(newAttachment, file)
         }
 
-        return Result(newAttachment, uploadError)
+        return Result(newAttachment, if (pathResult.isError) pathResult.error() else null)
     }
 
     /**
@@ -769,9 +779,10 @@ class ChannelControllerImpl(
 
     private fun upsertMessages(messages: List<Message>) {
         val copy = _messages.value ?: mutableMapOf()
+        val newMessages = messageHelper.updateValidAttachmentsUrl(messages, copy)
         // filter out old events
         val freshMessages = mutableListOf<Message>()
-        for (message in messages) {
+        for (message in newMessages) {
             val oldMessage = copy[message.id]
             var outdated = false
             if (oldMessage != null) {
@@ -1192,10 +1203,13 @@ class ChannelControllerImpl(
         val channel = channelData.toChannel(messages, members, reads, watchers, watcherCount)
         channel.config = getConfig()
         channel.unreadCount = computeUnreadCount(domainImpl.currentUser, _read.value, messages)
-        if (messages.isNotEmpty()) {
-            channel.lastMessageAt = messages.last().let { it.createdAt ?: it.createdLocallyAt }
-        }
+        channel.lastMessageAt = messages.lastOrNull()?.let { it.createdAt ?: it.createdLocallyAt }
 
         return channel
+    }
+
+    companion object {
+        private const val TYPE_IMAGE = "image"
+        private const val TYPE_FILE = "file"
     }
 }

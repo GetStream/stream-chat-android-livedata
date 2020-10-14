@@ -34,7 +34,7 @@ class ThreadControllerImpl(
     }
     override val messages =
         Transformations.map(mediatorLiveData) {
-            it.values.sortedBy { m -> m.createdAt }
+            it.values.sortedBy { m -> m.createdAt ?: m.createdLocallyAt }
                 .filter { channelControllerImpl.hideMessagesBefore == null || it.wasCreatedAfterOrAt(channelControllerImpl.hideMessagesBefore) }
         }
 
@@ -47,6 +47,8 @@ class ThreadControllerImpl(
     override val endOfOlderMessages: LiveData<Boolean> = _endOfOlderMessages
 
     suspend fun watch(limit: Int = 30): Result<List<Message>> = loadMessages(client.getReplies(threadId, limit), limit)
+
+    // TODO: offline storage for thread load more
 
     private suspend fun loadMessages(call: Call<List<Message>>, limit: Int): Result<List<Message>> =
         withContext(Dispatchers.IO) {

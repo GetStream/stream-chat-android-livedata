@@ -1,6 +1,7 @@
 package io.getstream.chat.android.livedata.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import io.getstream.chat.android.client.models.Attachment
 import io.getstream.chat.android.client.models.Message
@@ -17,7 +18,7 @@ import java.util.Date
  * and back:
  * messageEntity.toMessage()
  */
-@Entity(tableName = "stream_chat_message")
+@Entity(tableName = "stream_chat_message", indices = [Index(value = ["cid", "createdAt"]), Index(value = ["syncStatus"])])
 data class MessageEntity(@PrimaryKey var id: String, var cid: String, var userId: String) {
 
     /** the message text */
@@ -130,7 +131,9 @@ data class MessageEntity(@PrimaryKey var id: String, var cid: String, var userId
         type = m.type
         replyCount = m.replyCount
         createdAt = m.createdAt
+        createdLocallyAt = m.createdLocallyAt
         updatedAt = m.updatedAt
+        updatedLocallyAt = m.updatedLocallyAt
         deletedAt = m.deletedAt
         parentId = m.parentId
         command = m.command
@@ -156,7 +159,9 @@ data class MessageEntity(@PrimaryKey var id: String, var cid: String, var userId
         m.type = type
         m.replyCount = replyCount
         m.createdAt = createdAt
+        m.createdLocallyAt = createdLocallyAt
         m.updatedAt = updatedAt
+        m.updatedLocallyAt = updatedLocallyAt
         m.deletedAt = deletedAt
         m.parentId = parentId
         m.command = command
@@ -164,11 +169,9 @@ data class MessageEntity(@PrimaryKey var id: String, var cid: String, var userId
         m.reactionCounts = reactionCounts ?: mutableMapOf()
         m.reactionScores = reactionScores ?: mutableMapOf()
         m.syncStatus = syncStatus ?: SyncStatus.COMPLETED
-
         m.latestReactions = (latestReactions.map { it.toReaction(userMap) }).toMutableList()
         m.ownReactions = (ownReactions.map { it.toReaction(userMap) }).toMutableList()
         m.mentionedUsers = mentionedUsersId.mapNotNull { userMap[it] }.toMutableList()
-
         return m
     }
 }

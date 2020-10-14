@@ -1,6 +1,8 @@
 package io.getstream.chat.android.livedata.entity
 
+import androidx.room.Embedded
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import io.getstream.chat.android.client.models.Channel
 import io.getstream.chat.android.client.models.ChannelUserRead
@@ -19,7 +21,7 @@ import java.util.Date
  * messages are stored on their own table for easier pagination and updates
  *
  */
-@Entity(tableName = "stream_chat_channel_state")
+@Entity(tableName = "stream_chat_channel_state", indices = [Index(value = ["syncStatus"])])
 data class ChannelEntity(var type: String, var channelId: String) {
     @PrimaryKey
     var cid: String = "%s:%s".format(type, channelId)
@@ -47,6 +49,10 @@ data class ChannelEntity(var type: String, var channelId: String) {
 
     /** denormalize the last message date so we can sort on it */
     var lastMessageAt: Date? = null
+
+    /** denormalize the last message to optimise read performance for channel list showing the last message */
+    @Embedded(prefix = "last_message")
+    var lastMessage: MessageEntity? = null
 
     /** when the channel was created */
     var createdAt: Date? = null
@@ -77,7 +83,10 @@ data class ChannelEntity(var type: String, var channelId: String) {
         for (r in c.read) {
             reads[r.getUserId()] = ChannelUserReadEntity(r)
         }
-        lastMessageAt = c.lastMessageAt
+        c.messages.lastOrNull()?.let { message ->
+            lastMessage = MessageEntity(message)
+            lastMessageAt = message.createdAt
+        }
         createdByUserId = c.createdBy.id
     }
 
@@ -95,7 +104,11 @@ data class ChannelEntity(var type: String, var channelId: String) {
         c.lastMessageAt = lastMessageAt
         c.syncStatus = syncStatus
 
-        c.members = members.values.map { it.toMember(userMap) }
+        c.members = members.values.mapNotNull { it.toMember(userMap) }
+
+        lastMessage?.let {
+            c.messages = listOf(it.toMessage(userMap))
+        }
 
         c.read = reads.values.map { it.toChannelUserRead(userMap) }
 
@@ -105,12 +118,16 @@ data class ChannelEntity(var type: String, var channelId: String) {
         return c
     }
 
-    /** updates last message and lastmessagedate on this channel entity */
+    /** updates last message and lastMessageAt on this channel entity */
     fun addMessage(messageEntity: MessageEntity) {
-        checkNotNull(messageEntity.createdAt) { "created at cant be null, be sure to set message.createdAt" }
+        val createdAt = messageEntity.createdAt ?: messageEntity.createdLocallyAt
+        val messageEntityCreatedAt = checkNotNull(createdAt) { "created at cant be null, be sure to set message.createdAt" }
 
-        if (lastMessageAt == null || messageEntity.createdAt!!.after(lastMessageAt)) {
-            lastMessageAt = messageEntity.createdAt
+        val updateNeeded = messageEntity.id == lastMessage?.id
+        val newLastMessage = lastMessageAt == null || messageEntityCreatedAt.after(messageEntityCreatedAt)
+        if (newLastMessage || updateNeeded) {
+            lastMessageAt = messageEntityCreatedAt
+            lastMessage = messageEntity
         }
     }
 
@@ -127,4 +144,7 @@ data class ChannelEntity(var type: String, var channelId: String) {
             members[userId] = MemberEntity(member)
         }
     }
+
+    private fun max(date: Date?, otherDate: Date?): Date? =
+        date?.takeIf { otherDate == null || it.after(otherDate) } ?: otherDate
 }
