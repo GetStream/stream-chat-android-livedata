@@ -11,6 +11,7 @@ import io.getstream.chat.android.client.models.Reaction
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.livedata.entity.ChannelEntityPair
 import io.getstream.chat.android.livedata.request.AnyChannelPaginationRequest
+import java.util.Date
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.declaredMemberProperties
 
@@ -22,6 +23,10 @@ internal fun Channel.users(): List<User> = members.map(Member::user) +
     read.map(ChannelUserRead::user) +
     createdBy +
     messages.flatMap { it.users() }
+
+fun Message.getCreatedAtOrThrow(): Date {
+    return checkNotNull<Date>(createdAt ?: createdLocallyAt) { "It's required to set a createdAt or createdLocallyAt value for messages" }
+}
 
 internal fun Message.addReaction(reaction: Reaction, isMine: Boolean) {
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.MediatorLiveData
 import io.getstream.chat.android.client.models.ChannelUserRead
 import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.models.User
+import io.getstream.chat.android.livedata.extensions.getCreatedAtOrThrow
 import java.util.Date
 
 /**
@@ -50,6 +51,7 @@ class MessageListItemLiveData(
     private var messageItemsBase = listOf<MessageListItem>()
     private var messageItemsWithReads = listOf<MessageListItem>()
     private var typingUsers = listOf<User>()
+    private var typingItems = listOf<MessageListItem>()
 
     private var lastMessageID = ""
 
@@ -92,6 +94,11 @@ class MessageListItemLiveData(
                 nextMessage = messages[i + 1]
             }
 
+            if (i == 1 && isThread) {
+
+                entities.add(MessageListItem.ThreadSeparatorItem(message.getCreatedAtOrThrow()))
+            }
+
             // determine the position (top, middle, bottom)
             val user = message.user
             val positions = mutableListOf<MessageListItem.Position>()
@@ -127,6 +134,11 @@ class MessageListItemLiveData(
         return entities.toList()
     }
 
+    /**
+     * Reads changing is the second most common change on the message item list
+     * Since the most common scenario is that someone read to the end, we start by matching the end of the list
+     * We also sort the read state for easier merging of the lists
+     */
     private fun addReads(messages: List<MessageListItem>, reads: List<ChannelUserRead>?): List<MessageListItem> {
         if (reads == null || reads.isEmpty() || messages.isEmpty()) return messages
 
@@ -169,7 +181,7 @@ class MessageListItemLiveData(
     internal fun messagesChanged(messages: List<Message>): List<MessageListItem> {
         messageItemsBase = groupMessages()
         messageItemsWithReads = addReads(messageItemsBase, readsLiveData.value)
-        val out = messageItemsWithReads + usersAsTypingItems()
+        val out = messageItemsWithReads + typingItems
         val wrapped = wrapMessages(out)
         value = wrapped.copy(hasNewMessages = hasNewMessages)
         return out
@@ -177,7 +189,7 @@ class MessageListItemLiveData(
 
     internal fun readsChanged(reads: List<ChannelUserRead>): List<MessageListItem> {
         messageItemsWithReads = addReads(messageItemsBase, readsLiveData.value)
-        val out = messageItemsWithReads + usersAsTypingItems()
+        val out = messageItemsWithReads + typingItems
         value = wrapMessages(out)
         return out
     }
@@ -190,14 +202,21 @@ class MessageListItemLiveData(
         }
     }
 
+    /**
+     * Typing changes are the most common changes on the message list
+     * Note how they don't recompute the message list, but only add to the end
+     */
     internal fun typingChanged(users: List<User>): List<MessageListItem> {
-        val priorState = typingUsers.toList()
-        typingUsers = users.filter { it.id != currentUser.id }
-        val out = messageItemsWithReads + usersAsTypingItems()
+        val newTypingUsers = users.filter { it.id != currentUser.id }
 
-        if (typingUsers != priorState) {
+        return if (newTypingUsers != typingUsers) {
+            typingUsers = newTypingUsers
+            typingItems = usersAsTypingItems()
+            val out = messageItemsWithReads + typingItems
             value = wrapMessages(out)
+            out
+        } else {
+            messageItemsWithReads + typingItems
         }
-        return out
     }
 }
