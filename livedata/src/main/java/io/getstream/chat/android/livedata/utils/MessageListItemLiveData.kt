@@ -34,7 +34,7 @@ import java.util.Date
  * - Date separators can be turned off and are configurable
  * - Read state matches to the right message
  * - Leverages MediatorLiveData to improve handling of null values
- * - Efficient algorithm for updating read state
+ * - Efficient algorithm for updating read state and typing state
  * - Makes the MessageListItem immutable to prevent future bugs
  *
  */
@@ -69,6 +69,9 @@ class MessageListItemLiveData(
         }
     }
 
+    /**
+     * We could speed this up further in the case of a new message by only recomputing the last 2 items
+     */
     private fun groupMessages(): List<MessageListItem> {
         val messages = messagesLiveData.value
 
@@ -84,18 +87,22 @@ class MessageListItemLiveData(
         val entities = mutableListOf<MessageListItem>()
         val now = Date()
         var previousMessage: Message? = null
-        val size: Int = messages.size
-        val topIndex = Math.max(0, size - 1)
+        val topIndex = Math.max(0, messages.size - 1)
 
-        for (i in 0 until size) {
-            val message: Message = messages[i]
+        // only compute these once
+        var messageDateKeys: Map<String, String?> = mapOf()
+        dateSeparator?.let { ds ->
+            messageDateKeys = messages.map { it.id to ds(it) }.toMap()
+        }
+
+        for ((i, message) in messages.withIndex()) {
             var nextMessage: Message? = null
             if (i + 1 <= topIndex) {
                 nextMessage = messages[i + 1]
             }
 
+            // thread separator
             if (i == 1 && isThread) {
-
                 entities.add(MessageListItem.ThreadSeparatorItem(message.getCreatedAtOrThrow()))
             }
 
@@ -116,19 +123,17 @@ class MessageListItemLiveData(
             // date separators
             if (dateSeparator != null) {
                 previousMessage?.let {
-                    val previousKey = dateSeparator?.let { it(previousMessage!!) }
-                    val currentKey = dateSeparator?.let { it(message) }
+                    val previousKey = messageDateKeys[it.id]
+                    val currentKey = messageDateKeys[message.id]
                     if (previousKey != currentKey) {
                         entities.add(MessageListItem.DateSeparatorItem(message.createdAt ?: now))
                     }
-                }
-                if (previousMessage == null) {
+                } ?: run {
                     entities.add(MessageListItem.DateSeparatorItem(message.createdAt ?: now))
                 }
             }
 
-            val messageListItem: MessageListItem = MessageListItem.MessageItem(message, positions, isMine = message.user.id == currentUser.id)
-            entities.add(messageListItem)
+            entities.add(MessageListItem.MessageItem(message, positions, isMine = message.user.id == currentUser.id))
             previousMessage = message
         }
         return entities.toList()
