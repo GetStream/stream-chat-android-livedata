@@ -399,8 +399,9 @@ class ChannelControllerImpl(
             }
             response
         } else {
-            // if we are not offline we mark it as needing recovery
+            // if we are not online we mark it as needing recovery
             recoveryNeeded = true
+            // we return the offline result, which can be unknown (null), empty or an actual channel
             val channel = channelEntityPair?.channel
             Result(channel, null)
         }
