@@ -6,7 +6,6 @@ import io.getstream.chat.android.client.models.ChannelUserRead
 import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.models.User
 import io.getstream.chat.android.livedata.extensions.getCreatedAtOrThrow
-import java.util.Date
 
 /**
  * It's common for messaging UIs to interleave and group messages
@@ -16,17 +15,7 @@ import java.util.Date
  * - date separators are common
  * - typing indicators are typically shown at the bottom
  *
- * The class merges the livedata objects for messages, read state and typing
- *
- * - If typing indicators should be used
- * - How/if to use date separators
- *
- * Example date separator
- *
- * {
- *  val day = Date(message.createdAt?.time ?: 0)
- *  SimpleDateFormat("MM / dd").format(day)
- * }
+ * The MessageListItemLiveData class merges the livedata objects for messages, read state and typing
  *
  * It improves upon the previous Java code in the sample app in a few ways
  * - Kotlin
@@ -34,17 +23,36 @@ import java.util.Date
  * - Date separators can be turned off and are configurable
  * - Read state matches to the right message
  * - Leverages MediatorLiveData to improve handling of null values
- * - Efficient algorithm for updating read state and typing state
+ * - Efficient algorithm for updating read state
+ * - Efficient code for updating typing state
  * - Makes the MessageListItem immutable to prevent future bugs
+ *
+ *
+ * @param currentUser the user who is currently authenticated
+ * @param messageLd a livedata object with the messages
+ * @param readsLd a livedata object with the read state per user
+ * @param typingLd a livedata object with the users who are currently typing
+ * @param isThread if we are in a thread or not. if in a thread we add a threadSeperator in position 1 of the item list
+ * @param dateSeparator function to compare previous and current message and return if we should insert a date separator
+ *
+ * Here's an example:
+ *
+ * MessageListItemLiveData(currentUser, messagesLd, readsLd, typingLd, false) {
+ *   return if (previous==null) {
+ *       true
+ *   } else {
+ *       (message.getCreatedAtOrThrow().time - previous.getCreatedAtOrThrow().time) > (60 * 60 * 3)
+ *   }
+ * }
  *
  */
 class MessageListItemLiveData(
     val currentUser: User,
-    val messagesLiveData: LiveData<List<Message>>,
-    val readsLiveData: LiveData<List<ChannelUserRead>>,
-    val typingLiveData: LiveData<List<User>>? = null,
+    val messagesLd: LiveData<List<Message>>,
+    val readsLd: LiveData<List<ChannelUserRead>>,
+    val typingLd: LiveData<List<User>>? = null,
     val isThread: Boolean = false,
-    val dateSeparator: ((m: Message) -> String?)? = null
+    val dateSeparator: ((previous: Message?, current: Message) -> Boolean)? = null
 ) : MediatorLiveData<MessageListItemWrapper>() {
 
     private var hasNewMessages: Boolean = false
@@ -56,44 +64,72 @@ class MessageListItemLiveData(
     private var lastMessageID = ""
 
     init {
-        addSource(messagesLiveData) { value ->
+        addSource(messagesLd) { value ->
             messagesChanged(value)
         }
-        addSource(readsLiveData) { value ->
+        addSource(readsLd) { value ->
             readsChanged(value)
         }
-        if (typingLiveData != null) {
-            addSource(typingLiveData) { value ->
+        if (typingLd != null) {
+            addSource(typingLd) { value ->
                 typingChanged(value)
             }
         }
     }
 
+    internal fun messagesChanged(messages: List<Message>): List<MessageListItem> {
+        messageItemsBase = groupMessages()
+        messageItemsWithReads = addReads(messageItemsBase, readsLd.value)
+        val out = messageItemsWithReads + typingItems
+        val wrapped = wrapMessages(out)
+        value = wrapped.copy(hasNewMessages = hasNewMessages)
+        return out
+    }
+
+    internal fun readsChanged(reads: List<ChannelUserRead>): List<MessageListItem> {
+        messageItemsWithReads = addReads(messageItemsBase, readsLd.value)
+        val out = messageItemsWithReads + typingItems
+        value = wrapMessages(out)
+        return out
+    }
+
+    /**
+     * Typing changes are the most common changes on the message list
+     * Note how they don't recompute the message list, but only add to the end
+     */
+    internal fun typingChanged(users: List<User>): List<MessageListItem> {
+        val newTypingUsers = users.filter { it.id != currentUser.id }
+
+        return if (newTypingUsers != typingUsers) {
+            typingUsers = newTypingUsers
+            typingItems = usersAsTypingItems()
+            val out = messageItemsWithReads + typingItems
+            value = wrapMessages(out)
+            out
+        } else {
+            messageItemsWithReads + typingItems
+        }
+    }
+
     /**
      * We could speed this up further in the case of a new message by only recomputing the last 2 items
+     * It's fast enough though
      */
     private fun groupMessages(): List<MessageListItem> {
-        val messages = messagesLiveData.value
+        val messages = messagesLd.value
 
         if (messages == null || messages.isEmpty()) return emptyList()
 
         hasNewMessages = false
-        val newlastMessageID: String = messages[messages.size - 1].id
-        if (newlastMessageID != lastMessageID) {
+        val newLastMessageId: String = messages[messages.size - 1].id
+        if (newLastMessageId != lastMessageID) {
             hasNewMessages = true
         }
-        lastMessageID = newlastMessageID
+        lastMessageID = newLastMessageId
 
-        val entities = mutableListOf<MessageListItem>()
-        val now = Date()
+        val items = mutableListOf<MessageListItem>()
         var previousMessage: Message? = null
-        val topIndex = Math.max(0, messages.size - 1)
-
-        // only compute these once
-        var messageDateKeys: Map<String, String?> = mapOf()
-        dateSeparator?.let { ds ->
-            messageDateKeys = messages.map { it.id to ds(it) }.toMap()
-        }
+        val topIndex = 0.coerceAtLeast(messages.size - 1)
 
         for ((i, message) in messages.withIndex()) {
             var nextMessage: Message? = null
@@ -103,7 +139,7 @@ class MessageListItemLiveData(
 
             // thread separator
             if (i == 1 && isThread) {
-                entities.add(MessageListItem.ThreadSeparatorItem(message.getCreatedAtOrThrow()))
+                items.add(MessageListItem.ThreadSeparatorItem(message.getCreatedAtOrThrow()))
             }
 
             // determine the position (top, middle, bottom)
@@ -121,22 +157,16 @@ class MessageListItemLiveData(
                 }
             }
             // date separators
-            if (dateSeparator != null) {
-                previousMessage?.let {
-                    val previousKey = messageDateKeys[it.id]
-                    val currentKey = messageDateKeys[message.id]
-                    if (previousKey != currentKey) {
-                        entities.add(MessageListItem.DateSeparatorItem(message.createdAt ?: now))
-                    }
-                } ?: run {
-                    entities.add(MessageListItem.DateSeparatorItem(message.createdAt ?: now))
+            dateSeparator?.let {
+                if (it(previousMessage, message)) {
+                    items.add(MessageListItem.DateSeparatorItem(message.getCreatedAtOrThrow()))
                 }
             }
 
-            entities.add(MessageListItem.MessageItem(message, positions, isMine = message.user.id == currentUser.id))
+            items.add(MessageListItem.MessageItem(message, positions, isMine = message.user.id == currentUser.id))
             previousMessage = message
         }
-        return entities.toList()
+        return items.toList()
     }
 
     /**
@@ -179,49 +209,15 @@ class MessageListItemLiveData(
         return messagesCopy
     }
 
-    internal fun wrapMessages(items: List<MessageListItem>): MessageListItemWrapper {
+    private fun wrapMessages(items: List<MessageListItem>): MessageListItemWrapper {
         return MessageListItemWrapper(items = items, isThread = isThread, isTyping = typingUsers.isNotEmpty(), hasNewMessages = hasNewMessages)
     }
 
-    internal fun messagesChanged(messages: List<Message>): List<MessageListItem> {
-        messageItemsBase = groupMessages()
-        messageItemsWithReads = addReads(messageItemsBase, readsLiveData.value)
-        val out = messageItemsWithReads + typingItems
-        val wrapped = wrapMessages(out)
-        value = wrapped.copy(hasNewMessages = hasNewMessages)
-        return out
-    }
-
-    internal fun readsChanged(reads: List<ChannelUserRead>): List<MessageListItem> {
-        messageItemsWithReads = addReads(messageItemsBase, readsLiveData.value)
-        val out = messageItemsWithReads + typingItems
-        value = wrapMessages(out)
-        return out
-    }
-
-    internal fun usersAsTypingItems(): List<MessageListItem> {
+    private fun usersAsTypingItems(): List<MessageListItem> {
         return if (typingUsers.isNotEmpty()) {
             listOf(MessageListItem.TypingItem(typingUsers))
         } else {
             emptyList()
-        }
-    }
-
-    /**
-     * Typing changes are the most common changes on the message list
-     * Note how they don't recompute the message list, but only add to the end
-     */
-    internal fun typingChanged(users: List<User>): List<MessageListItem> {
-        val newTypingUsers = users.filter { it.id != currentUser.id }
-
-        return if (newTypingUsers != typingUsers) {
-            typingUsers = newTypingUsers
-            typingItems = usersAsTypingItems()
-            val out = messageItemsWithReads + typingItems
-            value = wrapMessages(out)
-            out
-        } else {
-            messageItemsWithReads + typingItems
         }
     }
 }

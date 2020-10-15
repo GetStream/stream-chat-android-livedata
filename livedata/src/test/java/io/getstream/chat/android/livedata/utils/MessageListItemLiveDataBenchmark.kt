@@ -7,12 +7,11 @@ import com.google.common.truth.Truth
 import io.getstream.chat.android.client.models.ChannelUserRead
 import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.models.User
+import io.getstream.chat.android.livedata.extensions.getCreatedAtOrThrow
 import io.getstream.chat.android.livedata.randomMessage
 import io.getstream.chat.android.livedata.randomUser
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.text.SimpleDateFormat
-import java.util.Date
 import kotlin.system.measureTimeMillis
 
 @RunWith(AndroidJUnit4::class)
@@ -24,9 +23,12 @@ class MessageListItemLiveDataBenchmark {
 
     private val currentUser = randomUser()
 
-    private fun simpleDateGroups(message: Message): String? {
-        val day = Date(message.createdAt?.time ?: 0)
-        return SimpleDateFormat("MM / dd").format(day)
+    private fun simpleDateGroups(previous: Message?, message: Message): Boolean {
+        return if (previous == null) {
+            true
+        } else {
+            (message.getCreatedAtOrThrow().time - previous.getCreatedAtOrThrow().time) > (60 * 60 * 3)
+        }
     }
 
     private fun manyMessages(): MessageListItemLiveData {

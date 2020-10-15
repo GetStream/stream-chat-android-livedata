@@ -12,6 +12,7 @@ import com.nhaarman.mockitokotlin2.verify
 import io.getstream.chat.android.client.models.ChannelUserRead
 import io.getstream.chat.android.client.models.Message
 import io.getstream.chat.android.client.models.User
+import io.getstream.chat.android.livedata.extensions.getCreatedAtOrThrow
 import io.getstream.chat.android.livedata.randomMessage
 import io.getstream.chat.android.livedata.randomUser
 import io.getstream.chat.android.livedata.utils.MessageListItem.TypingItem
@@ -19,7 +20,8 @@ import org.amshove.kluent.any
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Date
 
 @RunWith(AndroidJUnit4::class)
@@ -29,9 +31,21 @@ class MessageListItemLiveDataTest {
     val rule = InstantTaskExecutorRule()
     private val currentUser = randomUser()
 
-    private fun simpleDateGroups(message: Message): String? {
-        val day = Date(message.createdAt?.time ?: 0)
-        return SimpleDateFormat("MM / dd").format(day)
+    private fun simpleDateGroups(previous: Message?, message: Message): Boolean {
+        return if (previous == null) {
+            true
+        } else {
+            !isSameDay(message.getCreatedAtOrThrow(), previous.getCreatedAtOrThrow())
+        }
+    }
+    private fun isSameDay(date1: Date, date2: Date): Boolean {
+        val localDate1: LocalDate = date1.toInstant()
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+        val localDate2: LocalDate = date2.toInstant()
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+        return localDate1.isEqual(localDate2)
     }
 
     private fun emptyMessages(): MessageListItemLiveData {
@@ -110,7 +124,7 @@ class MessageListItemLiveDataTest {
     @Test
     fun `Should return messages with a typing indicator`() {
         val messageListItemLd = oneMessage()
-        messageListItemLd.messagesChanged(messageListItemLd.messagesLiveData.value!!)
+        messageListItemLd.messagesChanged(messageListItemLd.messagesLd.value!!)
         val items = messageListItemLd.typingChanged(listOf(randomUser()))
         Truth.assertThat(items.size).isEqualTo(3)
         Truth.assertThat(items.first()).isInstanceOf(MessageListItem.DateSeparatorItem::class.java)
