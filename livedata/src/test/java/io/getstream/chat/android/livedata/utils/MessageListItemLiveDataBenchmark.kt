@@ -23,11 +23,13 @@ class MessageListItemLiveDataBenchmark {
 
     private val currentUser = randomUser()
 
+    private val threeHours = 1000 * 60 * 60 * 3
+
     private fun simpleDateGroups(previous: Message?, message: Message): Boolean {
         return if (previous == null) {
             true
         } else {
-            (message.getCreatedAtOrThrow().time - previous.getCreatedAtOrThrow().time) > (60 * 60 * 3)
+            (message.getCreatedAtOrThrow().time - previous.getCreatedAtOrThrow().time) > threeHours
         }
     }
 

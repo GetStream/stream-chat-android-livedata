@@ -37,7 +37,7 @@ import io.getstream.chat.android.livedata.extensions.getCreatedAtOrThrow
  *
  * Here's an example:
  *
- * MessageListItemLiveData(currentUser, messagesLd, readsLd, typingLd, false) {
+ * MessageListItemLiveData(currentUser, messagesLd, readsLd, typingLd, false) { previous, message ->
  *   return if (previous==null) {
  *       true
  *   } else {
