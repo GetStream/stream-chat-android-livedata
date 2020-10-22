@@ -1,3 +1,6 @@
+# Important
+🚨 This repository is merged into the [Stream Chat Android SDK](https://github.com/GetStream/stream-chat-android) now. It is developed there under the [stream-chat-android-offline](https://github.com/GetStream/stream-chat-android/tree/develop/stream-chat-android-offline) module. This repository is considered as archived now. 
+
 ![latest-version](https://jitpack.io/v/GetStream/stream-chat-android-livedata.svg)
 ![Android CI](https://github.com/GetStream/stream-chat-android-livedata/workflows/Android%20CI/badge.svg?branch=master)
 [![codecov](https://codecov.io/gh/GetStream/stream-chat-android-livedata/branch/master/graph/badge.svg)](https://codecov.io/gh/GetStream/stream-chat-android-livedata)
